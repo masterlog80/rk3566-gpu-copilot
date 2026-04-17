@@ -57,20 +57,27 @@ A self-contained Docker image that provides a **modern web UI** to start, stop, 
 
 ### Build the image
 
-```bash
-# On the target ARM64 board directly:
-docker build -t rk3566-npu-stress:latest .
+## Quick Start
 
-# Or cross-compile from an x86 host:
+```bash
+# 1. Clone the repository
+git clone https://github.com/masterlog80/rk3566-npu-stress.git
+cd rk3566-npu-stress
+
+# 2. Build and start the container (first run builds the image)
+yes | docker image prune --all
+docker build -t rk3566-npu-stress .
+#docker compose up -d --build
+
+# 3. Deploy the composer file:
+docker compose -f docker-compose.yml up -d --remove-orphans
+
+# 4. Or cross-compile from an x86 host:
 docker buildx build --platform linux/arm64 \
   -t rk3566-npu-stress:latest \
   --load .
-```
 
-### Run (hardware mode – on RK3566 board)
-
-```bash
-docker compose up -d
+# 5. Open the dashboard
 ```
 
 Or manually:

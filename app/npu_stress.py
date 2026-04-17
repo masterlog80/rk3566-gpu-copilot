@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 import os
 import random
+import sys
 import threading
 import time
 from dataclasses import dataclass, field
@@ -145,7 +146,13 @@ class NPUStressTest:
     def _run(self) -> None:
         try:
             self._run_rknn()
-        except Exception:
+        except Exception as exc:
+            print(
+                f"[WARN] RKNN mode failed ({type(exc).__name__}: {exc}); "
+                "falling back to simulation mode.",
+                file=sys.stderr,
+                flush=True,
+            )
             self._run_simulated()
         finally:
             self.is_running = False

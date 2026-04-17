@@ -20,6 +20,10 @@ services:
     volumes:
       # Optional: persist logs / results outside the container
       - npu_results:/app/results
+      # Optional: if librknnrt.so was not baked into the image at build time,
+      # map it from the host (download from
+      # https://github.com/airockchip/rknn-toolkit2/tree/master/rknpu2/runtime/Linux/librknn_api/aarch64):
+      #- /usr/lib/librknnrt.so:/usr/lib/librknnrt.so
 
 volumes:
   npu_results:

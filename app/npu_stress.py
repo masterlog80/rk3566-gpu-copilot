@@ -2,7 +2,7 @@
 NPU Stress Test worker for Rockchip RK3566 (Orange Pi CM4).
 
 Primary mode  : uses the rknn-toolkit-lite2 Python package (rknnlite) to run
-                repeated MobileNetV1 inference on all three NPU cores.
+                repeated inference (model selectable) on all three NPU cores.
 Fallback mode : simulates a realistic NPU workload so the UI can be exercised on
                 any host (x86, CI, …) that does not have the RKNN runtime.
 """
@@ -20,7 +20,45 @@ from dataclasses import dataclass, field
 from typing import Any
 
 # ── constants ────────────────────────────────────────────────────────────────
+MODEL_DIR = os.environ.get("MODEL_DIR", "/app/models")
+# Legacy single-model env var kept for backward-compatibility
 MODEL_PATH = os.environ.get("MODEL_PATH", "/app/models/resnet18_for_rk3566_rk3568.rknn")
+
+# ── model registry ───────────────────────────────────────────────────────────
+# Maps a test_type key to its model filename, input shape, human label,
+# description shown in the UI, and baseline simulated FPS.
+MODEL_REGISTRY: dict[str, dict[str, Any]] = {
+    "resnet18": {
+        "filename": "resnet18_for_rk3566_rk3568.rknn",
+        "input_shape": (1, 224, 224, 3),
+        "label": "ResNet18",
+        "description": "ResNet18 – balanced baseline, exercises all NPU cores (~75 FPS)",
+        "sim_fps": 75.0,
+    },
+    "mobilenet_v1": {
+        "filename": "mobilenet_v1_for_rk3566_rk3568.rknn",
+        "input_shape": (1, 224, 224, 3),
+        "label": "MobileNetV1",
+        "description": "MobileNetV1 – lightweight depthwise-separable convolutions, high-throughput test (~200 FPS)",
+        "sim_fps": 200.0,
+    },
+    "mobilenet_v2": {
+        "filename": "mobilenet_v2_for_rk3566_rk3568.rknn",
+        "input_shape": (1, 224, 224, 3),
+        "label": "MobileNetV2",
+        "description": "MobileNetV2 – inverted residuals + linear bottlenecks, efficiency test (~160 FPS)",
+        "sim_fps": 160.0,
+    },
+    "multi_thread": {
+        "filename": "resnet18_for_rk3566_rk3568.rknn",
+        "input_shape": (1, 224, 224, 3),
+        "label": "Multi-thread (3×ResNet18)",
+        "description": "Multi-thread – 3 concurrent ResNet18 inference threads, stresses all three NPU cores (~210 FPS aggregate)",
+        "sim_fps": 210.0,
+    },
+}
+
+_NUM_MULTITHREAD_WORKERS = 3
 
 # sysfs paths for NPU utilisation (varies by BSP / kernel version)
 _NPU_UTIL_PATHS = [
@@ -121,8 +159,9 @@ _MAX_HISTORY_SAMPLES = 120
 class NPUStressTest:
     """Thread-safe NPU stress test controller."""
 
-    def __init__(self, duration: int) -> None:
+    def __init__(self, duration: int, test_type: str = "resnet18") -> None:
         self.duration = duration
+        self.test_type = test_type if test_type in MODEL_REGISTRY else "resnet18"
         self.is_running = False
         self.stop_requested = False
         self._thread: threading.Thread | None = None
@@ -173,11 +212,15 @@ class NPUStressTest:
             "total_inferences": 0,
             "duration_s": 0,
             "mode": "idle",
+            "test_type": "resnet18",
         }
 
     def _run(self) -> None:
         try:
-            self._run_rknn()
+            if self.test_type == "multi_thread":
+                self._run_rknn_multithread()
+            else:
+                self._run_rknn()
         except Exception as exc:
             print(
                 f"[WARN] RKNN mode failed ({type(exc).__name__}: {exc}); "
@@ -189,16 +232,21 @@ class NPUStressTest:
         finally:
             self.is_running = False
 
-    # ── RKNN mode ─────────────────────────────────────────────────────────────
+    # ── RKNN mode (single-thread) ─────────────────────────────────────────────
 
     def _run_rknn(self) -> None:
         from rknnlite.api import RKNNLite  # type: ignore[import-untyped]
+        import numpy as np  # noqa: PLC0415
+
+        cfg = MODEL_REGISTRY[self.test_type]
+        model_path = os.path.join(MODEL_DIR, cfg["filename"])
+        input_shape: tuple[int, ...] = cfg["input_shape"]
 
         rknn = RKNNLite(verbose=False)
-        if not os.path.isfile(MODEL_PATH):
-            raise FileNotFoundError(f"Model not found: {MODEL_PATH}")
+        if not os.path.isfile(model_path):
+            raise FileNotFoundError(f"Model not found: {model_path}")
 
-        ret = rknn.load_rknn(MODEL_PATH)
+        ret = rknn.load_rknn(model_path)
         if ret != 0:
             raise RuntimeError(f"load_rknn failed: {ret}")
 
@@ -206,9 +254,7 @@ class NPUStressTest:
         if ret != 0:
             raise RuntimeError(f"init_runtime failed: {ret}")
 
-        import numpy as np  # noqa: PLC0415
-
-        input_data = np.random.randint(0, 256, (1, 224, 224, 3), dtype=np.uint8)
+        input_data = np.random.randint(0, 256, input_shape, dtype=np.uint8)
         start = time.perf_counter()
         count = 0
         latencies: list[float] = []
@@ -247,10 +293,115 @@ class NPUStressTest:
                         "total_inferences": count,
                         "duration_s": self.duration,
                         "mode": "rknn",
+                        "test_type": self.test_type,
                     })
                     self.history.append(sample)
         finally:
             rknn.release()
+
+        self._finalise()
+
+    # ── RKNN mode (multi-thread) ──────────────────────────────────────────────
+
+    def _run_rknn_multithread(self) -> None:
+        """Spawn _NUM_MULTITHREAD_WORKERS inference threads, each with its own
+        RKNNLite instance, and aggregate their results into shared metrics."""
+        from rknnlite.api import RKNNLite  # type: ignore[import-untyped]
+        import numpy as np  # noqa: PLC0415
+
+        cfg = MODEL_REGISTRY[self.test_type]
+        model_path = os.path.join(MODEL_DIR, cfg["filename"])
+        input_shape: tuple[int, ...] = cfg["input_shape"]
+
+        if not os.path.isfile(model_path):
+            raise FileNotFoundError(f"Model not found: {model_path}")
+
+        # Initialise one RKNNLite instance per worker thread
+        instances: list[Any] = []
+        try:
+            for _ in range(_NUM_MULTITHREAD_WORKERS):
+                rknn = RKNNLite(verbose=False)
+                ret = rknn.load_rknn(model_path)
+                if ret != 0:
+                    raise RuntimeError(f"load_rknn failed: {ret}")
+                ret = rknn.init_runtime()
+                if ret != 0:
+                    raise RuntimeError(f"init_runtime failed: {ret}")
+                instances.append(rknn)
+        except Exception:
+            for inst in instances:
+                inst.release()
+            raise
+
+        # Shared aggregates written by workers, read by the metrics loop below
+        _agg_lock = threading.Lock()
+        _agg_count: list[int] = [0]
+        _agg_latencies: list[float] = []
+        _stop_workers = threading.Event()
+
+        start = time.perf_counter()
+
+        def _worker(rknn_inst: Any) -> None:
+            local_input = np.random.randint(0, 256, input_shape, dtype=np.uint8)
+            while not _stop_workers.is_set() and not self.stop_requested:
+                if time.perf_counter() - start >= self.duration:
+                    break
+                t0 = time.perf_counter()
+                rknn_inst.inference(inputs=[local_input])
+                t1 = time.perf_counter()
+                lat = (t1 - t0) * 1000
+                with _agg_lock:
+                    _agg_count[0] += 1
+                    _agg_latencies.append(lat)
+
+        workers = [
+            threading.Thread(target=_worker, args=(inst,), daemon=True)
+            for inst in instances
+        ]
+        for w in workers:
+            w.start()
+
+        try:
+            while not self.stop_requested:
+                elapsed = time.perf_counter() - start
+                if elapsed >= self.duration:
+                    break
+
+                with _agg_lock:
+                    count = _agg_count[0]
+                    recent = _agg_latencies[-600:]
+                    mean_lat = sum(recent) / len(recent) if recent else 0.0
+
+                fps = count / elapsed if elapsed > 0 else 0.0
+                temp = _read_temperature()
+                util = _read_npu_utilisation() or 0.0
+                progress = min(100.0, elapsed / self.duration * 100)
+
+                sample = {"t": round(elapsed, 2), "fps": round(fps, 1),
+                          "latency_ms": round(mean_lat, 2),
+                          "temperature": round(temp, 1), "npu_util": round(util, 1)}
+                with self._lock:
+                    self.metrics.update({
+                        "fps": round(fps, 1),
+                        "latency_ms": round(mean_lat, 2),
+                        "temperature": round(temp, 1),
+                        "npu_util": round(util, 1),
+                        "elapsed": round(elapsed, 1),
+                        "progress": round(progress, 1),
+                        "total_inferences": count,
+                        "duration_s": self.duration,
+                        "mode": "rknn",
+                        "test_type": self.test_type,
+                    })
+                    self.history.append(sample)
+
+                time.sleep(0.05)
+        finally:
+            _stop_workers.set()
+            for w in workers:
+                w.join(timeout=5)
+            for inst in instances:
+                inst.release()
 
         self._finalise()
 
@@ -261,8 +412,9 @@ class NPUStressTest:
         start = time.perf_counter()
         count = 0
 
-        # Baseline simulated values
-        base_fps = 210.0 + random.uniform(-10, 10)
+        # Baseline simulated values come from the model registry
+        cfg = MODEL_REGISTRY.get(self.test_type, MODEL_REGISTRY["resnet18"])
+        base_fps = cfg["sim_fps"] + random.uniform(-10, 10)
         base_lat = 1000.0 / base_fps
         base_temp = 45.0 + random.uniform(-2, 2)
 
@@ -286,7 +438,7 @@ class NPUStressTest:
                 base_fps = fps  # lock in plateau
 
             progress = min(100.0, elapsed / self.duration * 100)
-            # simulate ~240 FPS → 1 inference every ~4 ms
+            # simulate inferences proportional to FPS at ~20 samples/s
             inferences_this_tick = max(1, round(fps * 0.05))
             count += inferences_this_tick
 
@@ -304,6 +456,7 @@ class NPUStressTest:
                     "total_inferences": count,
                     "duration_s": self.duration,
                     "mode": "simulated",
+                    "test_type": self.test_type,
                 })
                 self.history.append(sample)
 
@@ -332,5 +485,6 @@ class NPUStressTest:
                 "total_inferences": self.metrics.get("total_inferences", 0),
                 "duration_s": self.duration,
                 "mode": self.metrics.get("mode", "unknown"),
+                "test_type": self.metrics.get("test_type", self.test_type),
             }
             self.metrics["progress"] = 100.0

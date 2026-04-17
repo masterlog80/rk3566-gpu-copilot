@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RK3566 NPU Stress Test</title>
+
+  <!-- Tailwind CSS (vendored) -->
+  <link rel="stylesheet" href="/static/vendor/tailwind.css" />
+  <!-- Alpine.js (vendored) -->
+  <script defer src="/static/vendor/alpine.min.js"></script>
+  <!-- Chart.js (vendored) -->
+  <script src="/static/vendor/chart.min.js"></script>
+
+  <style>
+    [x-cloak] { display: none !important; }
+
+    /* Animated gradient background */
+    body {
+      background: #0f172a;
+    }
+
+    /* Glowing card border */
+    .glow {
+      box-shadow: 0 0 0 1px rgba(56,189,248,.25), 0 4px 32px rgba(14,165,233,.15);
+    }
+
+    /* Circular progress ring */
+    .ring-track { stroke: #1e293b; }
+    .ring-fill  {
+      stroke: #38bdf8;
+      stroke-linecap: round;
+      transition: stroke-dashoffset 0.4s ease;
+      transform: rotate(-90deg);
+      transform-origin: 50% 50%;
+    }
+
+    /* Metric value pulse while running */
+    @keyframes pulse-soft {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: .7; }
+    }
+    .pulsing { animation: pulse-soft 1.6s ease-in-out infinite; }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: #0f172a; }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+  </style>
+</head>
+
+<body class="text-slate-200 min-h-screen font-sans antialiased"
+      x-data="dashboard()"
+      x-init="init()"
+      x-cloak>
+
+  <!-- ── Header ──────────────────────────────────────────────────────────── -->
+  <header class="border-b border-slate-800 px-6 py-4 flex items-center justify-between">
+    <div class="flex items-center gap-3">
+      <span class="text-2xl">⚡</span>
+      <div>
+        <h1 class="text-lg font-bold text-white leading-tight">RK3566 NPU Stress Test</h1>
+        <p class="text-xs text-slate-400">Orange Pi CM4 · Rockchip RKNPU2 · 1 TOPS</p>
+      </div>
+    </div>
+    <!-- Connection / mode badge -->
+    <div class="flex items-center gap-2">
+      <span x-show="status.metrics.mode === 'simulated'"
+            class="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full px-3 py-1">
+        🔬 Simulation Mode
+      </span>
+      <span x-show="status.metrics.mode === 'rknn'"
+            class="text-xs bg-green-500/20 text-green-300 border border-green-500/30 rounded-full px-3 py-1">
+        ✅ Hardware Mode
+      </span>
+      <div class="flex items-center gap-1.5 text-xs"
+           :class="connected ? 'text-green-400' : 'text-red-400'">
+        <span class="w-2 h-2 rounded-full inline-block"
+              :class="connected ? 'bg-green-400 animate-pulse' : 'bg-red-500'"></span>
+        <span x-text="connected ? 'Connected' : 'Disconnected'"></span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── Main layout ──────────────────────────────────────────────────────── -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 py-8 grid gap-6">
+
+    <!-- Row 1: Controls + Key Metrics + Temperature -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+
+      <!-- ── Controls card ──────────────────────────────────────────────── -->
+      <div class="glow bg-slate-900 rounded-2xl p-6 flex flex-col gap-5">
+        <h2 class="font-semibold text-slate-100 flex items-center gap-2">
+          <span>🎛️</span> Controls
+        </h2>
+
+        <!-- Duration slider -->
+        <div>
+          <label class="text-xs text-slate-400 mb-1 block">
+            Test duration:
+            <span class="font-bold text-brand-400 text-sm" x-text="duration + ' s'"></span>
+          </label>
+          <input type="range" min="5" max="300" step="5"
+                 x-model.number="duration"
+                 :disabled="status.is_running"
+                 class="w-full h-2 rounded-full appearance-none cursor-pointer
+                        bg-slate-700 accent-brand-500 disabled:opacity-40" />
+          <div class="flex justify-between text-xs text-slate-500 mt-1">
+            <span>5 s</span><span>5 min</span>
+          </div>
+        </div>
+
+        <!-- Duration presets -->
+        <div class="flex gap-2 flex-wrap">
+          <template x-for="d in [30,60,120,300]" :key="d">
+            <button @click="duration = d"
+                    :disabled="status.is_running"
+                    :class="duration === d
+                              ? 'bg-brand-600 text-white border-brand-500'
+                              : 'bg-slate-800 text-slate-400 border-slate-700 hover:border-brand-500'"
+                    class="px-3 py-1 rounded-lg border text-xs font-medium
+                           transition disabled:opacity-40 disabled:cursor-not-allowed"
+                    x-text="d >= 60 ? (d/60) + ' min' : d + ' s'">
+            </button>
+          </template>
+        </div>
+
+        <!-- Start / Stop button -->
+        <div class="mt-auto">
+          <button x-show="!status.is_running"
+                  @click="startTest()"
+                  :disabled="starting"
+                  class="w-full py-3 rounded-xl font-bold text-sm bg-brand-600 hover:bg-brand-500
+                         text-white transition active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed
+                         flex items-center justify-center gap-2">
+            <span x-show="!starting">🚀 Start Stress Test</span>
+            <span x-show="starting" class="flex items-center gap-2">
+              <svg class="animate-spin h-4 w-4" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v8z"/>
+              </svg>
+              Starting…
+            </span>
+          </button>
+
+          <button x-show="status.is_running"
+                  @click="stopTest()"
+                  :disabled="stopping"
+                  class="w-full py-3 rounded-xl font-bold text-sm bg-red-700 hover:bg-red-600
+                         text-white transition active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed
+                         flex items-center justify-center gap-2">
+            <span x-show="!stopping">⏹ Stop Test</span>
+            <span x-show="stopping">Stopping…</span>
+          </button>
+        </div>
+
+        <!-- Status line -->
+        <div class="text-xs text-center rounded-lg px-3 py-2 border"
+             :class="{
+               'bg-green-950 text-green-300 border-green-800': status.is_running,
+               'bg-slate-800 text-slate-400 border-slate-700': !status.is_running && !status.result,
+               'bg-blue-950 text-blue-300 border-blue-800': !status.is_running && status.result
+             }">
+          <span x-show="status.is_running" class="pulsing">⚡ Test running…</span>
+          <span x-show="!status.is_running && !status.result">⏸ Idle – ready to test</span>
+          <span x-show="!status.is_running && status.result">✅ Test complete</span>
+        </div>
+      </div>
+
+      <!-- ── Centre metric card (FPS + ring) ───────────────────────────── -->
+      <div class="glow bg-slate-900 rounded-2xl p-6 flex flex-col items-center justify-center gap-4">
+
+        <!-- Progress ring -->
+        <div class="relative w-44 h-44">
+          <svg class="w-full h-full" viewBox="0 0 160 160">
+            <circle class="ring-track" cx="80" cy="80" r="68" fill="none" stroke-width="12"/>
+            <circle class="ring-fill"
+                    cx="80" cy="80" r="68" fill="none" stroke-width="12"
+                    :stroke-dasharray="ringCircumference"
+                    :stroke-dashoffset="ringOffset"
+                    style="transition: stroke-dashoffset 0.4s ease"/>
+          </svg>
+          <!-- Centre text -->
+          <div class="absolute inset-0 flex flex-col items-center justify-center">
+            <span class="text-3xl font-black text-white leading-none"
+                  :class="status.is_running ? 'pulsing' : ''"
+                  x-text="status.is_running || status.result
+                            ? (status.metrics.fps ?? status.result?.avg_fps ?? 0).toFixed(1)
+                            : '—'">
+            </span>
+            <span class="text-xs text-slate-400 mt-1">FPS</span>
+            <span class="text-xs text-slate-500 mt-1"
+                  x-text="status.is_running
+                            ? progressLabel
+                            : (status.result ? 'Complete' : 'Idle')">
+            </span>
+          </div>
+        </div>
+
+        <!-- Latency -->
+        <div class="text-center">
+          <div class="text-2xl font-bold text-brand-400"
+               x-text="status.is_running
+                         ? (status.metrics.latency_ms ?? 0).toFixed(1) + ' ms'
+                         : (status.result ? status.result.avg_latency_ms.toFixed(1) + ' ms' : '—')">
+          </div>
+          <div class="text-xs text-slate-500">Mean Inference Latency</div>
+        </div>
+
+        <!-- Inferences counter -->
+        <div class="text-center">
+          <div class="text-xl font-semibold text-slate-200"
+               x-text="status.is_running
+                         ? (status.metrics.total_inferences ?? 0).toLocaleString()
+                         : (status.result ? status.result.total_inferences.toLocaleString() : '—')">
+          </div>
+          <div class="text-xs text-slate-500">Total Inferences</div>
+        </div>
+      </div>
+
+      <!-- ── Right: Temperature + NPU utilisation ───────────────────────── -->
+      <div class="glow bg-slate-900 rounded-2xl p-6 flex flex-col gap-5">
+        <h2 class="font-semibold text-slate-100 flex items-center gap-2">
+          <span>🌡️</span> Sensors
+        </h2>
+
+        <!-- Temperature gauge -->
+        <div>
+          <div class="flex justify-between text-xs text-slate-400 mb-1">
+            <span>SoC Temperature</span>
+            <span class="font-bold"
+                  :class="tempColor"
+                  x-text="currentTemp + ' °C'"></span>
+          </div>
+          <div class="w-full h-3 bg-slate-800 rounded-full overflow-hidden">
+            <div class="h-full rounded-full transition-all duration-500"
+                 :class="tempBarColor"
+                 :style="'width:' + tempPct + '%'"></div>
+          </div>
+          <div class="flex justify-between text-xs text-slate-600 mt-0.5">
+            <span>0°C</span><span>100°C</span>
+          </div>
+        </div>
+
+        <!-- NPU utilisation -->
+        <div>
+          <div class="flex justify-between text-xs text-slate-400 mb-1">
+            <span>NPU Utilisation</span>
+            <span class="font-bold text-brand-400"
+                  x-text="currentUtil.toFixed(0) + ' %'"></span>
+          </div>
+          <div class="w-full h-3 bg-slate-800 rounded-full overflow-hidden">
+            <div class="h-full rounded-full bg-brand-500 transition-all duration-500"
+                 :style="'width:' + currentUtil + '%'"></div>
+          </div>
+        </div>
+
+        <!-- Stat grid -->
+        <div class="grid grid-cols-2 gap-3 mt-auto">
+          <div class="bg-slate-800 rounded-xl p-3 text-center">
+            <div class="text-lg font-bold text-white"
+                 x-text="status.is_running
+                           ? (status.metrics.elapsed ?? 0).toFixed(0) + ' s'
+                           : (status.result ? status.result.duration_s + ' s' : '—')"></div>
+            <div class="text-xs text-slate-500">Elapsed</div>
+          </div>
+          <div class="bg-slate-800 rounded-xl p-3 text-center">
+            <div class="text-lg font-bold"
+                 :class="tempColor"
+                 x-text="peakTemp + ' °C'"></div>
+            <div class="text-xs text-slate-500">Peak Temp</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Row 2: Progress bar (visible while running) -->
+    <div x-show="status.is_running" x-transition class="glow bg-slate-900 rounded-2xl p-5">
+      <div class="flex justify-between text-xs text-slate-400 mb-2">
+        <span>Test Progress</span>
+        <span x-text="Math.round(status.metrics.progress ?? 0) + '%  ·  '
+                       + (Math.max(0, activeDuration - (status.metrics.elapsed ?? 0)).toFixed(0)) + ' s remaining'"></span>
+      </div>
+      <div class="w-full h-4 bg-slate-800 rounded-full overflow-hidden">
+        <div class="h-full rounded-full bg-gradient-to-r from-brand-700 to-brand-400 transition-all duration-500"
+             :style="'width:' + (status.metrics.progress ?? 0) + '%'"></div>
+      </div>
+    </div>
+
+    <!-- Row 3: Live chart -->
+    <div class="glow bg-slate-900 rounded-2xl p-6">
+      <div class="flex items-center justify-between mb-4">
+        <h2 class="font-semibold text-slate-100 flex items-center gap-2">
+          <span>📈</span> Live Metrics
+        </h2>
+        <div class="flex gap-3 text-xs text-slate-400">
+          <span class="flex items-center gap-1"><span class="w-3 h-1 inline-block rounded bg-brand-400"></span>FPS</span>
+          <span class="flex items-center gap-1"><span class="w-3 h-1 inline-block rounded bg-orange-400"></span>Temp (°C)</span>
+          <span class="flex items-center gap-1"><span class="w-3 h-1 inline-block rounded bg-purple-400"></span>NPU %</span>
+        </div>
+      </div>
+      <div class="h-56">
+        <canvas id="metricsChart"></canvas>
+      </div>
+    </div>
+
+    <!-- Row 4: Results card (after test) -->
+    <div x-show="status.result && !status.is_running" x-transition
+         class="glow bg-slate-900 rounded-2xl p-6">
+      <h2 class="font-semibold text-slate-100 mb-5 flex items-center gap-2">
+        <span>🏁</span> Test Results
+        <span class="ml-2 text-xs bg-green-500/20 text-green-300 border border-green-500/30 rounded-full px-3 py-0.5">
+          Complete
+        </span>
+      </h2>
+      <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-4">
+        <template x-for="item in resultItems" :key="item.label">
+          <div class="bg-slate-800 rounded-xl p-4 text-center">
+            <div class="text-2xl font-black" :class="item.color" x-text="item.value"></div>
+            <div class="text-xs text-slate-500 mt-1" x-text="item.label"></div>
+          </div>
+        </template>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- ── Footer ───────────────────────────────────────────────────────────── -->
+  <footer class="text-center text-xs text-slate-600 py-6">
+    RK3566 NPU Stress Test · Rockchip RKNPU2 · Orange Pi CM4
+  </footer>
+
+  <!-- ── Alpine.js app ──────────────────────────────────────────────────── -->
+  <script>
+    // Chart data arrays live OUTSIDE Alpine reactivity to avoid infinite loops
+    const _chartLabels = [];
+    const _chartFps    = [];
+    const _chartTemp   = [];
+    const _chartUtil   = [];
+    // Keep chart instance outside Alpine too
+    let _chartInstance = null;
+
+    function dashboard() {
+      return {
+        // ── state ──────────────────────────────────────────────────────────
+        duration: 60,
+        status: { is_running: false, metrics: {}, history: [], result: null },
+        connected: false,
+        starting: false,
+        stopping: false,
+        peakTemp: 0,
+
+        // ring
+        ringCircumference: 2 * Math.PI * 68,
+
+        // ── computed ───────────────────────────────────────────────────────
+        get ringOffset() {
+          const pct = this.status.metrics.progress ?? 0;
+          return this.ringCircumference * (1 - pct / 100);
+        },
+        get activeDuration() {
+          // Use the server-reported duration_s (from metrics or result)
+          return this.status.metrics?.duration_s
+              || this.status.result?.duration_s
+              || this.duration;
+        },
+        get progressLabel() {
+          const elapsed = this.status.metrics.elapsed ?? 0;
+          const dur     = this.activeDuration;
+          const left    = Math.max(0, dur - elapsed);
+          return left.toFixed(0) + 's left';
+        },
+        get currentTemp() {
+          if (this.status.is_running) return (this.status.metrics.temperature ?? 0).toFixed(1);
+          if (this.status.result)     return this.status.result.peak_temp.toFixed(1);
+          return '—';
+        },
+        get tempPct() {
+          const t = parseFloat(this.currentTemp) || 0;
+          return Math.min(100, t);
+        },
+        get tempColor() {
+          const t = parseFloat(this.currentTemp) || 0;
+          if (t >= 80) return 'text-red-400';
+          if (t >= 65) return 'text-orange-400';
+          return 'text-emerald-400';
+        },
+        get tempBarColor() {
+          const t = parseFloat(this.currentTemp) || 0;
+          if (t >= 80) return 'bg-red-500';
+          if (t >= 65) return 'bg-orange-500';
+          return 'bg-emerald-500';
+        },
+        get currentUtil() {
+          if (this.status.is_running) return this.status.metrics.npu_util ?? 0;
+          if (this.status.result)     return this.status.result.avg_npu_util ?? 0;
+          return 0;
+        },
+        get resultItems() {
+          const r = this.status.result;
+          if (!r) return [];
+          return [
+            { label: 'Avg FPS',        value: r.avg_fps,              color: 'text-brand-400'  },
+            { label: 'Avg Latency',    value: r.avg_latency_ms + ' ms', color: 'text-purple-400' },
+            { label: 'Peak Temp',      value: r.peak_temp + ' °C',    color: r.peak_temp >= 80 ? 'text-red-400' : r.peak_temp >= 65 ? 'text-orange-400' : 'text-emerald-400' },
+            { label: 'Avg NPU Util',   value: r.avg_npu_util + ' %',  color: 'text-brand-400'  },
+            { label: 'Inferences',     value: r.total_inferences.toLocaleString(), color: 'text-white'    },
+            { label: 'Duration',       value: r.duration_s + ' s',    color: 'text-slate-300'  },
+          ];
+        },
+
+        // ── lifecycle ──────────────────────────────────────────────────────
+        init() {
+          // Defer chart init to ensure the canvas is laid out by the browser
+          requestAnimationFrame(() => {
+            this.initChart();
+            this.connectSSE();
+          });
+        },
+
+        // ── SSE ────────────────────────────────────────────────────────────
+        connectSSE() {
+          const es = new EventSource('/api/events');
+          es.onopen    = () => { this.connected = true; };
+          es.onerror   = () => { this.connected = false; };
+          es.onmessage = (e) => {
+            this.connected = true;
+            const data = JSON.parse(e.data);
+            this.status = data;
+
+            // track peak temp
+            const t = data.metrics?.temperature ?? 0;
+            if (t > this.peakTemp) this.peakTemp = t;
+
+            // sync duration control while idle
+            if (!data.is_running && !data.result) {
+              this.peakTemp = 0;
+            }
+
+            this.updateChart(data.history ?? []);
+          };
+        },
+
+        // ── actions ────────────────────────────────────────────────────────
+        async startTest() {
+          this.starting = true;
+          this.peakTemp = 0;
+          this.resetChart();
+          try {
+            const r = await fetch(`/api/start?duration=${this.duration}`, { method: 'POST' });
+            if (!r.ok) {
+              const err = await r.json();
+              alert('Could not start: ' + (err.detail ?? r.statusText));
+            }
+          } finally {
+            this.starting = false;
+          }
+        },
+
+        async stopTest() {
+          this.stopping = true;
+          try {
+            await fetch('/api/stop', { method: 'POST' });
+          } finally {
+            this.stopping = false;
+          }
+        },
+
+        // ── chart ──────────────────────────────────────────────────────────
+        initChart() {
+          if (_chartInstance) { _chartInstance.destroy(); _chartInstance = null; }
+          const ctx = document.getElementById('metricsChart').getContext('2d');
+          _chartInstance = new Chart(ctx, {
+            type: 'line',
+            data: {
+              labels: _chartLabels,
+              datasets: [
+                {
+                  label: 'FPS',
+                  data: _chartFps,
+                  borderColor: '#38bdf8',
+                  backgroundColor: 'rgba(56,189,248,.08)',
+                  borderWidth: 2,
+                  pointRadius: 0,
+                  tension: 0.4,
+                  yAxisID: 'yFps',
+                  fill: true,
+                },
+                {
+                  label: 'Temp (°C)',
+                  data: _chartTemp,
+                  borderColor: '#fb923c',
+                  backgroundColor: 'transparent',
+                  borderWidth: 1.5,
+                  pointRadius: 0,
+                  tension: 0.4,
+                  yAxisID: 'yTemp',
+                },
+                {
+                  label: 'NPU %',
+                  data: _chartUtil,
+                  borderColor: '#c084fc',
+                  backgroundColor: 'transparent',
+                  borderWidth: 1.5,
+                  pointRadius: 0,
+                  tension: 0.4,
+                  yAxisID: 'yUtil',
+                },
+              ],
+            },
+            options: {
+              responsive: true,
+              maintainAspectRatio: false,
+              animation: { duration: 0 },
+              plugins: { legend: { display: false } },
+              scales: {
+                x: {
+                  ticks: { color: '#475569', maxTicksLimit: 8, font: { size: 10 } },
+                  grid:  { color: '#1e293b' },
+                },
+                yFps: {
+                  type: 'linear', position: 'left',
+                  min: 0,
+                  ticks: { color: '#38bdf8', font: { size: 10 } },
+                  grid:  { color: '#1e293b' },
+                  title: { display: true, text: 'FPS', color: '#38bdf8', font: { size: 10 } },
+                },
+                yTemp: {
+                  type: 'linear', position: 'right',
+                  min: 20, max: 100,
+                  ticks: { color: '#fb923c', font: { size: 10 } },
+                  grid:  { drawOnChartArea: false },
+                  title: { display: true, text: '°C', color: '#fb923c', font: { size: 10 } },
+                },
+                yUtil: {
+                  type: 'linear', position: 'right',
+                  min: 0, max: 100,
+                  display: false,
+                },
+              },
+            },
+          });
+        },
+
+        resetChart() {
+          _chartLabels.length = 0;
+          _chartFps.length    = 0;
+          _chartTemp.length   = 0;
+          _chartUtil.length   = 0;
+          if (_chartInstance) requestAnimationFrame(() => _chartInstance.update());
+        },
+
+        updateChart(history) {
+          if (!history.length || !_chartInstance) return;
+
+          // replace chart data with latest history (downsampled to MAX_CHART_POINTS)
+          const MAX_CHART_POINTS = 200;
+          const step = Math.max(1, Math.floor(history.length / MAX_CHART_POINTS));
+          const sampled = history.filter((_, i) => i % step === 0);
+
+          _chartLabels.length = 0;
+          _chartFps.length    = 0;
+          _chartTemp.length   = 0;
+          _chartUtil.length   = 0;
+
+          for (const s of sampled) {
+            _chartLabels.push(s.t.toFixed(0) + 's');
+            _chartFps.push(s.fps);
+            _chartTemp.push(s.temperature);
+            _chartUtil.push(s.npu_util);
+          }
+          requestAnimationFrame(() => { if (_chartInstance) _chartInstance.update(); });
+        },
+      };
+    }
+  </script>
+</body>
+</html>

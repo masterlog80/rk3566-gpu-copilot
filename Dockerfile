@@ -81,4 +81,7 @@ EXPOSE 8080
 
 ENV MODEL_PATH=/app/models/resnet18_for_rk3566_rk3568.rknn
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]
+# The entrypoint mounts debugfs (needed for /sys/kernel/debug/rknpu/load) when
+# the container has CAP_SYS_ADMIN / --privileged, then launches uvicorn.
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]

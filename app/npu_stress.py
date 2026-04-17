@@ -24,9 +24,17 @@ MODEL_PATH = os.environ.get("MODEL_PATH", "/app/models/resnet18_for_rk3566_rk356
 # sysfs paths for NPU utilisation (varies by BSP / kernel version)
 _NPU_UTIL_PATHS = [
     "/sys/kernel/debug/rknpu/load",                          # debugfs (needs CAP_SYS_ADMIN)
-    "/sys/devices/platform/fdab0000.npu/utilization",        # RK3566
-    "/sys/devices/platform/fde40000.npu/utilization",        # RK3568
+    "/sys/devices/platform/fdab0000.npu/utilization",        # RK3566 sysfs
+    "/sys/devices/platform/fde40000.npu/utilization",        # RK3568 sysfs
+    # devfreq load – format "<busy_ns>@<total_ns>Hz" or "<busy_us>@<total_us>"
+    "/sys/class/devfreq/fdab0000.npu/load",                  # RK3566 devfreq
+    "/sys/class/devfreq/fde40000.npu/load",                  # RK3568 devfreq
+    "/sys/devices/platform/fdab0000.npu/devfreq/fdab0000.npu/load",
+    "/sys/devices/platform/fde40000.npu/devfreq/fde40000.npu/load",
 ]
+
+# Emit the "all paths failed" warning at most once so it doesn't spam the log.
+_npu_util_warned = False
 
 # sysfs thermal zones
 _THERMAL_BASE = "/sys/class/thermal"
@@ -36,18 +44,38 @@ _THERMAL_BASE = "/sys/class/thermal"
 
 def _read_npu_utilisation() -> float | None:
     """Return NPU utilisation 0-100 or None if unavailable."""
+    global _npu_util_warned
     for path in _NPU_UTIL_PATHS:
         try:
             raw = open(path).read().strip()
-            # possible formats:  "98"  |  "Core0: 98%, Core1: 97%, Core2: 99%"
+            # format 1: "NPU load:  Core0:  98%, Core1:  97%, Core2:  99%"
             if "Core" in raw:
                 nums = [int(t.rstrip("%,")) for t in raw.split() if t.rstrip("%,").isdigit()]
                 if nums:
                     return sum(nums) / len(nums)
+            # format 2: devfreq "<busy>@<total>" e.g. "123456789@200000000Hz"
+            elif "@" in raw:
+                parts = raw.split("@")
+                busy = int(parts[0].strip())
+                total_str = parts[1].strip().rstrip("Hz").strip()
+                total = int(total_str)
+                if total > 0:
+                    return min(100.0, busy / total * 100.0)
+            # format 3: plain integer or float percentage "98" / "98.5"
             else:
                 return float(raw.split("%")[0].strip())
         except Exception:
             pass
+    if not _npu_util_warned:
+        _npu_util_warned = True
+        print(
+            "[WARN] NPU utilisation: none of the known sysfs/debugfs paths are readable. "
+            "Ensure the container is started with --privileged and debugfs is mounted "
+            "(docker-compose.yml already does this via the /sys/kernel/debug bind-mount). "
+            "NPU utilisation will be reported as 0%.",
+            file=sys.stderr,
+            flush=True,
+        )
     return None
 
 

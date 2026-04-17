@@ -57,14 +57,21 @@ RUN wget -q \
     ldconfig || \
     echo "[WARN] librknnrt.so download failed – container will fall back to simulation mode on hardware"
 
-# ── RKNN model (MobileNetV1, ~4 MB) ─────────────────────────────────────────
+# ── RKNN model (ResNet18 for RK3566/RK3568, ~11 MB) ─────────────────────────
 # Downloaded from the official Rockchip RKNN-Toolkit2 examples repository.
 # Used for NPU inference stress-testing.  Not required in simulation mode.
+#
+# Note: use raw.githubusercontent.com (not github.com/raw) so that files
+# stored with Git LFS are served as the real binary, not an LFS pointer.
+# A minimum-size check ensures a failed/partial download is caught early
+# rather than producing a misleading RKNN_ERR_MODEL_INVALID at runtime.
 RUN mkdir -p /app/models && \
     wget -q \
-      "https://github.com/airockchip/rknn-toolkit2/raw/${RKNN_TOOLKIT2_TAG}/rknn-toolkit-lite2/examples/rknn_mobilenet_demo/model/RK356X/mobilenet_v1.rknn" \
-      -O /app/models/mobilenet_v1.rknn || \
-    echo "[INFO] Model download failed – simulation mode will be used"
+      "https://raw.githubusercontent.com/airockchip/rknn-toolkit2/${RKNN_TOOLKIT2_TAG}/rknn-toolkit-lite2/examples/resnet18/resnet18_for_rk3566_rk3568.rknn" \
+      -O /app/models/resnet18_for_rk3566_rk3568.rknn && \
+    [ "$(stat -c%s /app/models/resnet18_for_rk3566_rk3568.rknn)" -gt 10000000 ] || \
+    { rm -f /app/models/resnet18_for_rk3566_rk3568.rknn; \
+      echo "[INFO] Model download failed – simulation mode will be used"; }
 
 # ── Application code ─────────────────────────────────────────────────────────
 COPY app/ .
@@ -72,6 +79,6 @@ COPY app/ .
 # ── Runtime ──────────────────────────────────────────────────────────────────
 EXPOSE 8080
 
-ENV MODEL_PATH=/app/models/mobilenet_v1.rknn
+ENV MODEL_PATH=/app/models/resnet18_for_rk3566_rk3568.rknn
 
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080"]

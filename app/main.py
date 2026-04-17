@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from npu_stress import NPUStressTest
+from npu_stress import MODEL_REGISTRY, NPUStressTest
 
 app = FastAPI(title="RK3566 NPU Stress Test")
 
@@ -35,13 +35,30 @@ def _status() -> dict[str, Any]:
 # ── API ───────────────────────────────────────────────────────────────────────
 
 @app.post("/api/start")
-async def api_start(duration: int = Query(default=60, ge=5, le=3600)):
+async def api_start(
+    duration: int = Query(default=60, ge=5, le=3600),
+    test_type: str = Query(default="resnet18"),
+):
     global _test
     if _test and _test.is_running:
         raise HTTPException(status_code=409, detail="A stress test is already running")
-    _test = NPUStressTest(duration=duration)
+    if test_type not in MODEL_REGISTRY:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Unknown test_type '{test_type}'. Valid options: {list(MODEL_REGISTRY)}",
+        )
+    _test = NPUStressTest(duration=duration, test_type=test_type)
     _test.start()
-    return {"status": "started", "duration": duration}
+    return {"status": "started", "duration": duration, "test_type": test_type}
+
+
+@app.get("/api/test-types")
+async def api_test_types():
+    """Return the registry of available test types with their labels and descriptions."""
+    return {
+        key: {"label": val["label"], "description": val["description"]}
+        for key, val in MODEL_REGISTRY.items()
+    }
 
 
 @app.post("/api/stop")

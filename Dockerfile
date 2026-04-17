@@ -71,7 +71,23 @@ RUN mkdir -p /app/models && \
       -O /app/models/resnet18_for_rk3566_rk3568.rknn && \
     [ "$(stat -c%s /app/models/resnet18_for_rk3566_rk3568.rknn)" -gt 10000000 ] || \
     { rm -f /app/models/resnet18_for_rk3566_rk3568.rknn; \
-      echo "[INFO] Model download failed – simulation mode will be used"; }
+      echo "[INFO] ResNet18 model download failed – simulation mode will be used"; }
+
+# ── RKNN model (MobileNetV1 for RK3566/RK3568, ~4 MB) ───────────────────────
+RUN wget -q \
+      "https://raw.githubusercontent.com/airockchip/rknn-toolkit2/${RKNN_TOOLKIT2_TAG}/rknn-toolkit-lite2/examples/mobilenet_v1/mobilenet_v1_for_rk3566_rk3568.rknn" \
+      -O /app/models/mobilenet_v1_for_rk3566_rk3568.rknn && \
+    [ "$(stat -c%s /app/models/mobilenet_v1_for_rk3566_rk3568.rknn)" -gt 3000000 ] || \
+    { rm -f /app/models/mobilenet_v1_for_rk3566_rk3568.rknn; \
+      echo "[INFO] MobileNetV1 model download failed – this test type will fall back to simulation"; }
+
+# ── RKNN model (MobileNetV2 for RK3566/RK3568, ~4 MB) ───────────────────────
+RUN wget -q \
+      "https://raw.githubusercontent.com/airockchip/rknn-toolkit2/${RKNN_TOOLKIT2_TAG}/rknn-toolkit-lite2/examples/mobilenet_v2/mobilenet_v2_for_rk3566_rk3568.rknn" \
+      -O /app/models/mobilenet_v2_for_rk3566_rk3568.rknn && \
+    [ "$(stat -c%s /app/models/mobilenet_v2_for_rk3566_rk3568.rknn)" -gt 3000000 ] || \
+    { rm -f /app/models/mobilenet_v2_for_rk3566_rk3568.rknn; \
+      echo "[INFO] MobileNetV2 model download failed – this test type will fall back to simulation"; }
 
 # ── Application code ─────────────────────────────────────────────────────────
 COPY app/ .

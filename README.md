@@ -62,6 +62,7 @@ Or manually:
 docker run -d \
   --privileged \
   --device /dev/dri \
+  -v /sys/kernel/debug:/sys/kernel/debug:ro \
   -p 8080:8080 \
   rk3566-npu-stress:latest
 ```
@@ -137,6 +138,11 @@ The container needs privileged access or specific device mappings to reach the R
 ```
 
 `/sys/kernel/debug/rknpu/load` (NPU utilisation) requires `debugfs` to be mounted and `CAP_SYS_ADMIN`.
+
+The `docker-compose.yml` already bind-mounts `/sys/kernel/debug` from the host, and the
+container entrypoint script automatically tries to mount debugfs if the bind-mount is absent.
+For bare `docker run` invocations, add `-v /sys/kernel/debug:/sys/kernel/debug:ro` to expose
+NPU utilisation inside the container.
 
 ### librknnrt.so – Rockchip NPU runtime library
 

@@ -18,6 +18,11 @@ services:
     environment:
       - MODEL_PATH=/app/models/resnet18_for_rk3566_rk3568.rknn
     volumes:
+      # Expose the host's debugfs so /sys/kernel/debug/rknpu/load is readable
+      # inside the container (required for NPU utilisation monitoring).
+      # The entrypoint script also tries to mount debugfs automatically when
+      # this bind-mount is absent, but having both is the most robust setup.
+      - /sys/kernel/debug:/sys/kernel/debug:ro
       # Optional: persist logs / results outside the container
       - npu_results:/app/results
       # Optional: if librknnrt.so was not baked into the image at build time,

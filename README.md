@@ -18,36 +18,6 @@ A self-contained Docker image that provides a **modern web UI** to start, stop, 
 
 ---
 
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────┐
-│  Docker Container (arm64v8/ubuntu:22.04)            │
-│                                                     │
-│  ┌──────────────┐     ┌───────────────────────────┐ │
-│  │  FastAPI     │────▶│  NPUStressTest worker     │ │
-│  │  (uvicorn)   │     │  - rknnlite2 primary mode │ │
-│  │  :8080       │     │  - simulation fallback    │ │
-│  └──────┬───────┘     └───────────────────────────┘ │
-│         │ SSE / REST                                 │
-│  ┌──────▼───────────────────────────────────────┐   │
-│  │  Web UI (Tailwind + Alpine.js + Chart.js)    │   │
-│  └─────────────────────────────────────────────-┘   │
-└─────────────────────────────────────────────────────┘
-```
-
-**Endpoints**
-
-| Method | Path | Description |
-|--------|------|-------------|
-| `GET`  | `/` | Web dashboard |
-| `POST` | `/api/start?duration=60` | Start stress test |
-| `POST` | `/api/stop` | Stop running test |
-| `GET`  | `/api/status` | JSON status snapshot |
-| `GET`  | `/api/events` | SSE stream (500 ms interval) |
-
----
-
 ## Quick Start
 
 ### Prerequisites
@@ -91,6 +61,37 @@ docker run -d \
 ```
 
 Open **http://\<board-ip\>:8080** in your browser.
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────┐
+│  Docker Container (arm64v8/ubuntu:22.04)            │
+│                                                     │
+│  ┌──────────────┐     ┌───────────────────────────┐ │
+│  │  FastAPI     │────▶│  NPUStressTest worker     │ │
+│  │  (uvicorn)   │     │  - rknnlite2 primary mode │ │
+│  │  :8080       │     │  - simulation fallback    │ │
+│  └──────┬───────┘     └───────────────────────────┘ │
+│         │ SSE / REST                                 │
+│  ┌──────▼───────────────────────────────────────┐   │
+│  │  Web UI (Tailwind + Alpine.js + Chart.js)    │   │
+│  └─────────────────────────────────────────────-┘   │
+└─────────────────────────────────────────────────────┘
+```
+
+**Endpoints**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET`  | `/` | Web dashboard |
+| `POST` | `/api/start?duration=60` | Start stress test |
+| `POST` | `/api/stop` | Stop running test |
+| `GET`  | `/api/status` | JSON status snapshot |
+| `GET`  | `/api/events` | SSE stream (500 ms interval) |
+
+---
+
 
 ### Run (simulation / development mode – any host)
 

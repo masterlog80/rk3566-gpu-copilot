@@ -16,7 +16,7 @@ services:
       - /dev/dri:/dev/dri         # Mali GPU / RKNPU device node (common path)
     privileged: true              # Required to access /sys/kernel/debug/rknpu/*
     environment:
-      - MODEL_PATH=/app/models/mobilenet_v1.rknn
+      - MODEL_PATH=/app/models/resnet18_for_rk3566_rk3568.rknn
     volumes:
       # Optional: persist logs / results outside the container
       - npu_results:/app/results

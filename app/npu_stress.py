@@ -19,7 +19,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 # ── constants ────────────────────────────────────────────────────────────────
-MODEL_PATH = os.environ.get("MODEL_PATH", "/app/models/mobilenet_v1.rknn")
+MODEL_PATH = os.environ.get("MODEL_PATH", "/app/models/resnet18_for_rk3566_rk3568.rknn")
 
 # sysfs paths for NPU utilisation (varies by BSP / kernel version)
 _NPU_UTIL_PATHS = [
@@ -170,7 +170,7 @@ class NPUStressTest:
         if ret != 0:
             raise RuntimeError(f"load_rknn failed: {ret}")
 
-        ret = rknn.init_runtime(core_mask=RKNNLite.NPU_CORE_AUTO)
+        ret = rknn.init_runtime()
         if ret != 0:
             raise RuntimeError(f"init_runtime failed: {ret}")
 

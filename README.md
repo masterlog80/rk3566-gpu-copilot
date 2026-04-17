@@ -179,7 +179,7 @@ Without `librknnrt.so` the application automatically falls back to **simulation 
 (the UI is fully functional, but no real NPU inference is performed).
 
 ### Supported chips
-The `mobilenet_v1.rknn` model bundled in the image is compiled for the **RK356X** (RK3566 / RK3568) NPU target.  It will **not** run on RK3588 or RK3399 without recompilation.
+The `resnet18_for_rk3566_rk3568.rknn` model bundled in the image is compiled for the **RK356X** (RK3566 / RK3568) NPU target.  It will **not** run on RK3588 or RK3399 without recompilation.
 
 ### Custom model
 Mount a different `.rknn` model and point to it via the `MODEL_PATH` environment variable:

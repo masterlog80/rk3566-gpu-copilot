@@ -1,0 +1,30 @@
+# Byte-compiled Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Editor directories
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artefacts / caches
+*.egg-info/
+dist/
+build/
+htmlcov/
+.coverage
+
+# Temporary files
+tmp/
+*.tmp

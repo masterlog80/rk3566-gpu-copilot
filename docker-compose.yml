@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  npu-stress-test:
+    image: rk3566-npu-stress:latest
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: rk3566-npu-stress
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    # Grant access to the Rockchip NPU and GPU devices.
+    # Remove / comment out lines you don't need when running in simulation mode.
+    devices:
+      - /dev/dri:/dev/dri         # Mali GPU / RKNPU device node (common path)
+    privileged: true              # Required to access /sys/kernel/debug/rknpu/*
+    environment:
+      - MODEL_PATH=/app/models/mobilenet_v1.rknn
+    volumes:
+      # Optional: persist logs / results outside the container
+      - npu_results:/app/results
+
+volumes:
+  npu_results:

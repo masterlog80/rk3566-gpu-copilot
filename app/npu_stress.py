@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import os
+import re
 import random
 import sys
 import threading
@@ -61,9 +62,12 @@ def _read_npu_utilisation() -> float | None:
                 total = int(total_str)
                 if total > 0:
                     return min(100.0, busy / total * 100.0)
-            # format 3: plain integer or float percentage "98" / "98.5"
+            # format 3: "NPU load:  0%", plain "98%", or bare "98" / "98.5"
             else:
-                return float(raw.split("%")[0].strip())
+                m = re.search(r"(\d+(?:\.\d+)?)\s*%", raw)
+                if m:
+                    return float(m.group(1))
+                return float(raw.strip())
         except Exception:
             pass
     if not _npu_util_warned:

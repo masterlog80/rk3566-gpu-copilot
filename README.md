@@ -138,6 +138,46 @@ The container needs privileged access or specific device mappings to reach the R
 
 `/sys/kernel/debug/rknpu/load` (NPU utilisation) requires `debugfs` to be mounted and `CAP_SYS_ADMIN`.
 
+### librknnrt.so – Rockchip NPU runtime library
+
+The image downloads `librknnrt.so` from the official
+[airockchip/rknn-toolkit2](https://github.com/airockchip/rknn-toolkit2/tree/master/rknpu2/runtime/Linux/librknn_api/aarch64)
+repository into `/usr/lib/` at **build time**.
+
+If the build-time download failed (e.g. no internet access on the build host), or if you
+see the following error in the container logs, the library is missing:
+
+```
+!!! It is detected that /usr/lib/librknnrt.so is missing in the container.
+```
+
+**Option A – rebuild the image** (recommended, requires internet on build host):
+
+```bash
+docker buildx build --platform linux/arm64 -t rk3566-npu-stress:latest .
+```
+
+**Option B – copy the library manually** onto the board and mount it into the container:
+
+```bash
+# On the board, download once:
+wget -O /usr/lib/librknnrt.so \
+  "https://github.com/airockchip/rknn-toolkit2/raw/v2.3.2/rknpu2/runtime/Linux/librknn_api/aarch64/librknnrt.so"
+
+# Then run with a volume mount:
+docker run -d \
+  --privileged \
+  --device /dev/dri \
+  -v /usr/lib/librknnrt.so:/usr/lib/librknnrt.so \
+  -p 8080:8080 \
+  rk3566-npu-stress:latest
+```
+
+When using `docker compose`, uncomment the matching volume line in `docker-compose.yml`.
+
+Without `librknnrt.so` the application automatically falls back to **simulation mode**
+(the UI is fully functional, but no real NPU inference is performed).
+
 ### Supported chips
 The `mobilenet_v1.rknn` model bundled in the image is compiled for the **RK356X** (RK3566 / RK3568) NPU target.  It will **not** run on RK3588 or RK3399 without recompilation.
 

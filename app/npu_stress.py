@@ -59,6 +59,7 @@ MODEL_REGISTRY: dict[str, dict[str, Any]] = {
 }
 
 _NUM_MULTITHREAD_WORKERS = 3
+_WORKER_JOIN_TIMEOUT_S = 5
 
 # sysfs paths for NPU utilisation (varies by BSP / kernel version)
 _NPU_UTIL_PATHS = [
@@ -161,7 +162,14 @@ class NPUStressTest:
 
     def __init__(self, duration: int, test_type: str = "resnet18") -> None:
         self.duration = duration
-        self.test_type = test_type if test_type in MODEL_REGISTRY else "resnet18"
+        if test_type not in MODEL_REGISTRY:
+            print(
+                f"[WARN] Unknown test_type '{test_type}', falling back to 'resnet18'.",
+                file=sys.stderr,
+                flush=True,
+            )
+            test_type = "resnet18"
+        self.test_type = test_type
         self.is_running = False
         self.stop_requested = False
         self._thread: threading.Thread | None = None
@@ -335,8 +343,7 @@ class NPUStressTest:
 
         # Shared aggregates written by workers, read by the metrics loop below
         _agg_lock = threading.Lock()
-        _agg_count: list[int] = [0]
-        _agg_latencies: list[float] = []
+        _agg: dict[str, Any] = {"count": 0, "latencies": []}
         _stop_workers = threading.Event()
 
         start = time.perf_counter()
@@ -351,8 +358,8 @@ class NPUStressTest:
                 t1 = time.perf_counter()
                 lat = (t1 - t0) * 1000
                 with _agg_lock:
-                    _agg_count[0] += 1
-                    _agg_latencies.append(lat)
+                    _agg["count"] += 1
+                    _agg["latencies"].append(lat)
 
         workers = [
             threading.Thread(target=_worker, args=(inst,), daemon=True)
@@ -368,8 +375,8 @@ class NPUStressTest:
                     break
 
                 with _agg_lock:
-                    count = _agg_count[0]
-                    recent = _agg_latencies[-600:]
+                    count = _agg["count"]
+                    recent = _agg["latencies"][-600:]
                     mean_lat = sum(recent) / len(recent) if recent else 0.0
 
                 fps = count / elapsed if elapsed > 0 else 0.0
@@ -399,7 +406,7 @@ class NPUStressTest:
         finally:
             _stop_workers.set()
             for w in workers:
-                w.join(timeout=5)
+                w.join(timeout=_WORKER_JOIN_TIMEOUT_S)
             for inst in instances:
                 inst.release()
 

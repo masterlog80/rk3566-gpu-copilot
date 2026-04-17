@@ -68,12 +68,12 @@
       <span x-show="status.metrics.mode === 'simulated'"
             class="text-xs bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-full px-3 py-1">
         🔬 Simulation
-        <span x-text="testTypes[status.metrics.test_type] ? ' · ' + testTypes[status.metrics.test_type].label : ''"></span>
+        <span x-text="activeTestTypeLabel"></span>
       </span>
       <span x-show="status.metrics.mode === 'rknn'"
             class="text-xs bg-green-500/20 text-green-300 border border-green-500/30 rounded-full px-3 py-1">
         ✅ Hardware
-        <span x-text="testTypes[status.metrics.test_type] ? ' · ' + testTypes[status.metrics.test_type].label : ''"></span>
+        <span x-text="activeTestTypeLabel"></span>
       </span>
       <div class="flex items-center gap-1.5 text-xs"
            :class="connected ? 'text-green-400' : 'text-red-400'">
@@ -380,7 +380,10 @@
         // ring
         ringCircumference: 2 * Math.PI * 68,
 
-        // ── computed ───────────────────────────────────────────────────────
+        get activeTestTypeLabel() {
+          const tt = this.status.metrics.test_type;
+          return tt && this.testTypes[tt] ? ' · ' + this.testTypes[tt].label : '';
+        },
         get ringOffset() {
           const pct = this.status.metrics.progress ?? 0;
           return this.ringCircumference * (1 - pct / 100);

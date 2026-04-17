@@ -31,8 +31,8 @@ A self-contained Docker image that provides a **modern web UI** to start, stop, 
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/masterlog80/rk3566-npu-stress.git
-cd rk3566-npu-stress
+git clone https://github.com/masterlog80/rk3566-gpu-copilot.git
+cd rk3566-gpu-copilot
 
 # 2. Build and start the container (first run builds the image)
 yes | docker image prune --all

@@ -18,12 +18,6 @@ A self-contained Docker image that provides a **modern web UI** to start, stop, 
 
 ---
 
-## Screenshots
-
-![RK3566 NPU Stress Test Dashboard](https://github.com/user-attachments/assets/90c05f5a-2853-48e8-a878-2bccfbb5d262)
-
----
-
 ## Quick Start
 
 ### Prerequisites
@@ -68,6 +62,14 @@ docker run -d \
 ```
 
 Open **http://\<board-ip\>:8080** in your browser.
+
+---
+
+## Screenshots
+
+![RK3566 NPU Stress Test Dashboard](https://github.com/user-attachments/assets/90c05f5a-2853-48e8-a878-2bccfbb5d262)
+
+---
 
 ## Architecture
 
